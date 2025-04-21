@@ -59,6 +59,21 @@ export async function executeQuery<T>(query: string, params: any[] = []): Promis
     return results as unknown as T;
   }
   
+  // Handle SELECT FROM Users queries
+  if (query.includes('FROM Users WHERE email = ?')) {
+    const email = params[0];
+    const results = mockUsers.filter(user => user.email === email);
+    return results as unknown as T;
+  }
+  
+  if (query.includes('FROM Users WHERE email = ? AND password = ?')) {
+    const [email, password] = params;
+    const results = mockUsers.filter(
+      user => user.email === email && password === password
+    );
+    return results as unknown as T;
+  }
+  
   // Handle INSERT operations
   if (query.includes('INSERT INTO Enrollments')) {
     const [userId, courseId] = params;
@@ -85,6 +100,30 @@ export async function executeQuery<T>(query: string, params: any[] = []): Promis
       payment_date: new Date().toISOString()
     };
     mockPayments.push(newPayment);
+    return [{ insertId: newId }] as unknown as T;
+  }
+  
+  // Handle INSERT INTO Users operation
+  if (query.includes('INSERT INTO Users')) {
+    const [name, email, password, role] = params;
+    
+    // Check if email already exists
+    const existingUser = mockUsers.find(user => user.email === email);
+    if (existingUser) {
+      return [] as unknown as T; // Return empty result to indicate failure
+    }
+    
+    const newId = mockUsers.length + 1;
+    const newUser = {
+      id: newId,
+      name,
+      email,
+      password,
+      role,
+      created_at: new Date().toISOString()
+    };
+    
+    mockUsers.push(newUser);
     return [{ insertId: newId }] as unknown as T;
   }
   

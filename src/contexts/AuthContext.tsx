@@ -94,18 +94,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Insert new user
-      const result = await executeQuery(
+      const result = await executeQuery<any>(
         'INSERT INTO Users (name, email, password, role, created_at) VALUES (?, ?, ?, ?, NOW())',
         [name, email, password, 'user']
       );
 
-      // @ts-ignore - MySQL insert result structure
-      const newUserId = result.insertId;
-      
-      if (!newUserId) {
-        throw new Error('Failed to create user');
+      // Check if result is array and has insertId
+      if (!Array.isArray(result) || !result[0] || typeof result[0].insertId !== 'number') {
+        throw new Error('Failed to create user - Invalid result format');
       }
 
+      const newUserId = result[0].insertId;
+      
       const newUser = {
         id: newUserId,
         name,
