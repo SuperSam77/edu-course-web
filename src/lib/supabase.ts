@@ -1,9 +1,7 @@
-
 import { createClient } from '@supabase/supabase-js';
 
-// Default to empty strings to avoid the 'supabaseUrl is required' error
-// In production, these would be set as actual environment variables
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://your-supabase-url.supabase.co';
+// Use the provided Supabase URL
+const supabaseUrl = 'https://tflsdkrbeaicubiwkyrq.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key';
 
 // Create Supabase client
