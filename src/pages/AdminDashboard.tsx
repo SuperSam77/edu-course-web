@@ -22,12 +22,6 @@ import {
 import { Course, Category, User } from '@/lib/supabase';
 import { supabase } from '@/lib/supabase';
 
-interface Category {
-  id: number;
-  name: string;
-  description: string;
-}
-
 interface Enrollment {
   id: number;
   user_id: number;

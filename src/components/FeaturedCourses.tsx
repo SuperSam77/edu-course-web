@@ -1,7 +1,8 @@
 
 import { useState, useEffect } from 'react';
-import { CourseCard, Course } from '@/components/CourseCard';
-import { executeQuery } from '@/utils/db';
+import { CourseCard } from '@/components/CourseCard';
+import { fetchCourses } from '@/services/courseService';
+import { Course } from '@/lib/supabase';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export function FeaturedCourses() {
@@ -10,18 +11,11 @@ export function FeaturedCourses() {
 
   useEffect(() => {
     const fetchFeaturedCourses = async () => {
+      setLoading(true);
       try {
-        // In a real app, you might have a "featured" field or select based on enrollment count
-        const query = `
-          SELECT c.*, u.name AS author_name 
-          FROM Courses c
-          LEFT JOIN Users u ON c.created_by = u.id
-          ORDER BY c.created_at DESC
-          LIMIT 4
-        `;
-        
-        const results = await executeQuery<Course[]>(query);
-        setCourses(results);
+        // Get the latest 4 courses
+        const allCourses = await fetchCourses();
+        setCourses(allCourses.slice(0, 4));
       } catch (error) {
         console.error('Error fetching featured courses:', error);
       } finally {

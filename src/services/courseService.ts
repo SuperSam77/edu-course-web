@@ -82,7 +82,8 @@ export async function fetchCourseCategories(courseId: number): Promise<Category[
       return [];
     }
     
-    return data.map(item => item.categories) as Category[];
+    // Properly cast and extract the category data
+    return data.map(item => item.categories as Category);
   } catch (error) {
     console.error('Error in fetchCourseCategories:', error);
     return [];

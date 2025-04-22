@@ -1,13 +1,8 @@
 
 import { useEffect, useState } from 'react';
-import { executeQuery } from '@/utils/db';
+import { fetchCategories } from '@/services/courseService';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-
-interface Category {
-  id: number;
-  name: string;
-  description: string;
-}
+import { Category } from '@/lib/supabase';
 
 interface CategoryFilterProps {
   onCategoryChange: (categoryId: number | undefined) => void;
@@ -18,16 +13,16 @@ export function CategoryFilter({ onCategoryChange }: CategoryFilterProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
   useEffect(() => {
-    const fetchCategories = async () => {
+    const loadCategories = async () => {
       try {
-        const results = await executeQuery<Category[]>('SELECT * FROM Categories');
+        const results = await fetchCategories();
         setCategories(results);
       } catch (error) {
         console.error('Error fetching categories:', error);
       }
     };
     
-    fetchCategories();
+    loadCategories();
   }, []);
 
   const handleCategoryChange = (value: string) => {

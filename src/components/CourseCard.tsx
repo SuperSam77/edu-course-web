@@ -2,17 +2,10 @@
 import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Course as SupabaseCourse } from '@/lib/supabase';
 
-export interface Course {
-  id: number;
-  title: string;
-  description: string;
-  price: number;
-  image_url: string;
-  created_by: number;
-  created_at: string;
-  author_name?: string;
-}
+// Use the same Course type as defined in supabase.ts
+export type Course = SupabaseCourse;
 
 export function CourseCard({ course }: { course: Course }) {
   return (
