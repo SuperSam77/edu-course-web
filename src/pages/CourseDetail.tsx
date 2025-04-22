@@ -1,26 +1,18 @@
-
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Navbar } from '@/components/Navbar';
-import { executeQuery } from '@/utils/db';
-import { Course } from '@/components/CourseCard';
-import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/components/ui/use-toast';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-
-interface Category {
-  id: number;
-  name: string;
-}
-
-interface Enrollment {
-  id: number;
-  user_id: number;
-  course_id: number;
-  enrolled_at: string;
-}
+import { Button } from '@/components/ui/button';
+import { 
+  fetchCourseById, 
+  fetchCourseCategories,
+  enrollInCourse,
+  checkEnrollment
+} from '@/services/courseService';
+import { Course, Category } from '@/lib/supabase';
 
 const CourseDetail = () => {
   const { id } = useParams();
@@ -39,38 +31,23 @@ const CourseDetail = () => {
       setLoading(true);
       try {
         // Fetch course details
-        const courseResults = await executeQuery<Course[]>(`
-          SELECT c.*, u.name AS author_name
-          FROM Courses c
-          LEFT JOIN Users u ON c.created_by = u.id
-          WHERE c.id = ?
-        `, [courseId]);
+        const courseData = await fetchCourseById(courseId);
 
-        if (courseResults.length === 0) {
+        if (!courseData) {
           navigate('/courses');
           return;
         }
 
-        setCourse(courseResults[0]);
+        setCourse(courseData);
 
         // Fetch categories for this course
-        const categoryResults = await executeQuery<Category[]>(`
-          SELECT cat.id, cat.name
-          FROM Categories cat
-          JOIN Course_Categories cc ON cat.id = cc.category_id
-          WHERE cc.course_id = ?
-        `, [courseId]);
-
-        setCategories(categoryResults);
+        const categoriesData = await fetchCourseCategories(courseId);
+        setCategories(categoriesData);
 
         // Check if user is enrolled
         if (user) {
-          const enrollmentResults = await executeQuery<Enrollment[]>(`
-            SELECT * FROM Enrollments
-            WHERE user_id = ? AND course_id = ?
-          `, [user.id, courseId]);
-          
-          setIsEnrolled(enrollmentResults.length > 0);
+          const enrolled = await checkEnrollment(user.id, courseId);
+          setIsEnrolled(enrolled);
         }
       } catch (error) {
         console.error('Error fetching course details:', error);
@@ -100,25 +77,21 @@ const CourseDetail = () => {
       return;
     }
 
+    if (!course) return;
+
     setEnrolling(true);
     try {
-      // Create enrollment record
-      await executeQuery(
-        'INSERT INTO Enrollments (user_id, course_id, enrolled_at) VALUES (?, ?, NOW())',
-        [user.id, courseId]
-      );
+      const success = await enrollInCourse(user.id, courseId, course.price);
       
-      // Create payment record (in a real app, you would integrate with a payment gateway)
-      await executeQuery(
-        'INSERT INTO Payments (user_id, course_id, amount, payment_status, payment_date) VALUES (?, ?, ?, ?, NOW())',
-        [user.id, courseId, course?.price, 'completed']
-      );
-
-      setIsEnrolled(true);
-      toast({
-        title: 'Enrollment successful',
-        description: `You are now enrolled in "${course?.title}"`,
-      });
+      if (success) {
+        setIsEnrolled(true);
+        toast({
+          title: 'Enrollment successful',
+          description: `You are now enrolled in "${course.title}"`,
+        });
+      } else {
+        throw new Error('Enrollment failed');
+      }
     } catch (error) {
       console.error('Error enrolling in course:', error);
       toast({

@@ -1,19 +1,26 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Navbar } from '@/components/Navbar';
 import { useAuth } from '@/contexts/AuthContext';
-import { executeQuery } from '@/utils/db';
-import { Course } from '@/components/CourseCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from '@/components/ui/dialog';
 import { toast } from '@/components/ui/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { User } from '@/contexts/AuthContext';
+import { Edit, Trash2 } from 'lucide-react';
+import { 
+  fetchCourses, 
+  fetchCategories, 
+  createCourse,
+  updateCourse,
+  deleteCourse,
+  fetchCourseCategories
+} from '@/services/courseService';
+import { Course, Category, User } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 interface Category {
   id: number;
@@ -36,7 +43,6 @@ const AdminDashboard = () => {
   
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [newCourse, setNewCourse] = useState({
     title: '',
@@ -45,51 +51,35 @@ const AdminDashboard = () => {
     image_url: ''
   });
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
-  const [isCreatingCourse, setIsCreatingCourse] = useState(false);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-  // Redirect if not admin
   useEffect(() => {
     if (!isAdmin) {
       navigate('/');
     }
   }, [isAdmin, navigate]);
 
-  // Fetch data for dashboard
   useEffect(() => {
     if (!user || !isAdmin) return;
 
     const fetchDashboardData = async () => {
       try {
-        // Fetch courses
-        const coursesResult = await executeQuery<Course[]>(`
-          SELECT c.*, u.name AS author_name 
-          FROM Courses c
-          JOIN Users u ON c.created_by = u.id
-          ORDER BY c.created_at DESC
-        `);
-        setCourses(coursesResult);
+        const coursesData = await fetchCourses();
+        setCourses(coursesData);
 
-        // Fetch users
-        const usersResult = await executeQuery<User[]>(`
-          SELECT id, name, email, role FROM Users
-        `);
-        setUsers(usersResult);
+        const { data: usersData, error: usersError } = await supabase
+          .from('users')
+          .select('*');
+          
+        if (usersError) throw usersError;
+        setUsers(usersData as User[]);
 
-        // Fetch enrollments with user and course names
-        const enrollmentsResult = await executeQuery<Enrollment[]>(`
-          SELECT e.*, u.name as user_name, c.title as course_title
-          FROM Enrollments e
-          JOIN Users u ON e.user_id = u.id
-          JOIN Courses c ON e.course_id = c.id
-          ORDER BY e.enrolled_at DESC
-        `);
-        setEnrollments(enrollmentsResult);
-
-        // Fetch categories
-        const categoriesResult = await executeQuery<Category[]>(`
-          SELECT * FROM Categories
-        `);
-        setCategories(categoriesResult);
+        const categoriesData = await fetchCategories();
+        setCategories(categoriesData);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
         toast({
@@ -103,10 +93,21 @@ const AdminDashboard = () => {
     fetchDashboardData();
   }, [user, isAdmin]);
 
-  const handleCreateCourse = async () => {
+  const resetCourseForm = () => {
+    setNewCourse({
+      title: '',
+      description: '',
+      price: 0,
+      image_url: ''
+    });
+    setSelectedCategories([]);
+    setSelectedCourse(null);
+    setEditMode(false);
+  };
+
+  const handleCreateOrUpdateCourse = async () => {
     if (!user) return;
     
-    // Validate course data
     if (!newCourse.title.trim()) {
       toast({
         title: 'Error',
@@ -134,71 +135,112 @@ const AdminDashboard = () => {
       return;
     }
 
-    setIsCreatingCourse(true);
+    setIsSubmitting(true);
 
     try {
-      // Insert the course
-      const courseResult = await executeQuery(`
-        INSERT INTO Courses (title, description, price, image_url, created_by, created_at)
-        VALUES (?, ?, ?, ?, ?, NOW())
-      `, [
-        newCourse.title,
-        newCourse.description,
-        newCourse.price,
-        newCourse.image_url || 'https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop',
-        user.id
-      ]);
+      if (editMode && selectedCourse) {
+        const success = await updateCourse(
+          selectedCourse.id, 
+          {
+            title: newCourse.title,
+            description: newCourse.description,
+            price: newCourse.price,
+            image_url: newCourse.image_url || 'https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop',
+          },
+          selectedCategories
+        );
 
-      // @ts-ignore - MySQL insert result structure
-      const courseId = courseResult.insertId;
+        if (success) {
+          toast({
+            title: 'Success',
+            description: 'Course updated successfully'
+          });
+          
+          const updatedCourses = await fetchCourses();
+          setCourses(updatedCourses);
+          resetCourseForm();
+        } else {
+          throw new Error('Failed to update course');
+        }
+      } else {
+        const courseId = await createCourse(
+          {
+            title: newCourse.title,
+            description: newCourse.description,
+            price: newCourse.price,
+            image_url: newCourse.image_url || 'https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop',
+            created_by: user.id,
+            created_at: new Date().toISOString()
+          },
+          selectedCategories
+        );
 
-      // Insert course categories
-      if (selectedCategories.length > 0) {
-        for (const categoryId of selectedCategories) {
-          await executeQuery(`
-            INSERT INTO Course_Categories (course_id, category_id)
-            VALUES (?, ?)
-          `, [courseId, categoryId]);
+        if (courseId) {
+          toast({
+            title: 'Success',
+            description: 'Course created successfully'
+          });
+          
+          const updatedCourses = await fetchCourses();
+          setCourses(updatedCourses);
+          resetCourseForm();
+        } else {
+          throw new Error('Failed to create course');
         }
       }
-
-      // Log admin action
-      await executeQuery(`
-        INSERT INTO Admin_Actions (admin_id, action, action_date)
-        VALUES (?, ?, NOW())
-      `, [user.id, `Created course: ${newCourse.title}`]);
-
-      toast({
-        title: 'Success',
-        description: 'Course created successfully'
-      });
-
-      // Reset form and fetch updated courses
-      setNewCourse({
-        title: '',
-        description: '',
-        price: 0,
-        image_url: ''
-      });
-      setSelectedCategories([]);
-
-      // Refresh courses list
-      const coursesResult = await executeQuery<Course[]>(`
-        SELECT c.*, u.name AS author_name 
-        FROM Courses c
-        JOIN Users u ON c.created_by = u.id
-        ORDER BY c.created_at DESC
-      `);
-      setCourses(coursesResult);
     } catch (error) {
-      console.error('Error creating course:', error);
+      console.error('Error creating/updating course:', error);
       toast({
         title: 'Error',
-        description: 'Failed to create course',
+        description: `Failed to ${editMode ? 'update' : 'create'} course`,
         variant: 'destructive'
       });
     } finally {
-      setIsCreatingCourse(false);
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEditCourse = async (course: Course) => {
+    setEditMode(true);
+    setSelectedCourse(course);
+    setNewCourse({
+      title: course.title,
+      description: course.description,
+      price: course.price,
+      image_url: course.image_url
+    });
+    
+    const courseCategories = await fetchCourseCategories(course.id);
+    setSelectedCategories(courseCategories.map(cat => cat.id));
+  };
+
+  const handleDeleteCourse = async () => {
+    if (!selectedCourse) return;
+    
+    setIsDeleting(true);
+    try {
+      const success = await deleteCourse(selectedCourse.id);
+      
+      if (success) {
+        toast({
+          title: 'Success',
+          description: 'Course deleted successfully'
+        });
+        
+        setCourses(courses.filter(c => c.id !== selectedCourse.id));
+        setShowDeleteDialog(false);
+      } else {
+        throw new Error('Failed to delete course');
+      }
+    } catch (error) {
+      console.error('Error deleting course:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete course',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -224,8 +266,9 @@ const AdminDashboard = () => {
           <TabsList className="grid w-full md:w-auto md:inline-grid grid-cols-4 mb-6">
             <TabsTrigger value="courses">Courses</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
-            <TabsTrigger value="enrollments">Enrollments</TabsTrigger>
-            <TabsTrigger value="addCourse">Add Course</TabsTrigger>
+            <TabsTrigger value="addCourse">
+              {editMode ? 'Edit Course' : 'Add Course'}
+            </TabsTrigger>
           </TabsList>
           
           <TabsContent value="courses" className="border rounded-lg p-6 bg-white">
@@ -250,9 +293,33 @@ const AdminDashboard = () => {
                       <TableCell>{course.author_name}</TableCell>
                       <TableCell>${course.price}</TableCell>
                       <TableCell>{new Date(course.created_at).toLocaleDateString()}</TableCell>
-                      <TableCell>
-                        <Button variant="outline" size="sm" onClick={() => navigate(`/courses/${course.id}`)}>
+                      <TableCell className="space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => navigate(`/courses/${course.id}`)}
+                        >
                           View
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleEditCourse(course)}
+                        >
+                          <Edit className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            setSelectedCourse(course);
+                            setShowDeleteDialog(true);
+                          }}
+                          className="text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Delete
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -277,7 +344,7 @@ const AdminDashboard = () => {
                 <TableBody>
                   {users.map(user => (
                     <TableRow key={user.id}>
-                      <TableCell>{user.id}</TableCell>
+                      <TableCell>{user.id.substring(0, 8)}...</TableCell>
                       <TableCell>{user.name}</TableCell>
                       <TableCell>{user.email}</TableCell>
                       <TableCell>
@@ -292,34 +359,10 @@ const AdminDashboard = () => {
             </div>
           </TabsContent>
 
-          <TabsContent value="enrollments" className="border rounded-lg p-6 bg-white">
-            <h2 className="text-xl font-semibold mb-4">Enrollments</h2>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>User</TableHead>
-                    <TableHead>Course</TableHead>
-                    <TableHead>Enrolled At</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {enrollments.map(enrollment => (
-                    <TableRow key={enrollment.id}>
-                      <TableCell>{enrollment.id}</TableCell>
-                      <TableCell>{enrollment.user_name}</TableCell>
-                      <TableCell>{enrollment.course_title}</TableCell>
-                      <TableCell>{new Date(enrollment.enrolled_at).toLocaleDateString()}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </TabsContent>
-
           <TabsContent value="addCourse" className="border rounded-lg p-6 bg-white">
-            <h2 className="text-xl font-semibold mb-4">Add New Course</h2>
+            <h2 className="text-xl font-semibold mb-4">
+              {editMode ? 'Edit Course' : 'Add New Course'}
+            </h2>
             <div className="space-y-4 max-w-3xl">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -381,17 +424,52 @@ const AdminDashboard = () => {
                   ))}
                 </div>
               </div>
-              <Button 
-                className="mt-4" 
-                onClick={handleCreateCourse}
-                disabled={isCreatingCourse}
-              >
-                {isCreatingCourse ? 'Creating...' : 'Create Course'}
-              </Button>
+              <div className="flex space-x-4">
+                <Button 
+                  onClick={handleCreateOrUpdateCourse}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Processing...' : editMode ? 'Update Course' : 'Create Course'}
+                </Button>
+                {editMode && (
+                  <Button 
+                    variant="outline" 
+                    onClick={resetCourseForm}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </div>
             </div>
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Course</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{selectedCourse?.title}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline" 
+              onClick={() => setShowDeleteDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteCourse}
+              disabled={isDeleting}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Course'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -1,44 +1,28 @@
 
 import { useEffect, useState } from 'react';
 import { CourseCard, Course } from '@/components/CourseCard';
-import { executeQuery } from '@/utils/db';
+import { fetchCourses } from '@/services/courseService';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Card, CardContent } from '@/components/ui/card';
 
 export function CourseGrid({ categoryId }: { categoryId?: number }) {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchCourses = async () => {
+    const loadCourses = async () => {
+      setLoading(true);
       try {
-        let query = `
-          SELECT c.*, u.name AS author_name 
-          FROM Courses c
-          LEFT JOIN Users u ON c.created_by = u.id
-        `;
-        
-        let params: any[] = [];
-        
-        if (categoryId) {
-          query += `
-            JOIN Course_Categories cc ON c.id = cc.course_id
-            WHERE cc.category_id = ?
-          `;
-          params.push(categoryId);
-        }
-        
-        query += ' ORDER BY c.created_at DESC';
-        
-        const results = await executeQuery<Course[]>(query, params);
-        setCourses(results);
+        const coursesData = await fetchCourses(categoryId);
+        setCourses(coursesData);
       } catch (error) {
-        console.error('Error fetching courses:', error);
+        console.error('Error loading courses:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchCourses();
+    loadCourses();
   }, [categoryId]);
 
   if (loading) {
@@ -79,5 +63,3 @@ export function CourseGrid({ categoryId }: { categoryId?: number }) {
     </div>
   );
 }
-
-import { Card, CardContent } from '@/components/ui/card';

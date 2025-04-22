@@ -1,21 +1,14 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from '@/components/ui/use-toast';
-import { executeQuery } from '@/utils/db';
-
-export interface User {
-  id: number;
-  name: string;
-  email: string;
-  role: 'admin' | 'user';
-}
+import { supabase, User } from '@/lib/supabase';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   signup: (name: string, email: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isAdmin: boolean;
 }
 
@@ -24,44 +17,68 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Check if the user is already logged in from localStorage
+
+  // Check if user is already signed in
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch (error) {
-        localStorage.removeItem('user');
+    const loadUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (userData) {
+          setUser(userData as User);
+        }
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    };
+
+    loadUser();
+
+    // Listen for authentication changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (userData) {
+          setUser(userData as User);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      // In a real application, use a secure API endpoint for authentication
-      const users = await executeQuery<User[]>(
-        'SELECT id, name, email, role FROM Users WHERE email = ? AND password = ?', 
-        [email, password] // In production, NEVER store plain text passwords
-      );
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
       
-      if (users.length === 0) {
+      if (authError) {
         toast({
           title: 'Login failed',
-          description: 'Invalid email or password',
+          description: authError.message,
           variant: 'destructive'
         });
         return false;
       }
 
-      const loggedInUser = users[0];
-      setUser(loggedInUser);
-      localStorage.setItem('user', JSON.stringify(loggedInUser));
-      
       toast({
         title: 'Login successful',
-        description: `Welcome back, ${loggedInUser.name}!`
+        description: `Welcome back!`
       });
       
       return true;
@@ -78,43 +95,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signup = async (name: string, email: string, password: string): Promise<boolean> => {
     try {
-      // Check if user already exists
-      const existingUsers = await executeQuery<User[]>(
-        'SELECT id FROM Users WHERE email = ?', 
-        [email]
-      );
-      
-      if (existingUsers.length > 0) {
+      // Sign up with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+
+      if (authError || !authData.user) {
         toast({
           title: 'Signup failed',
-          description: 'Email already in use',
+          description: authError?.message || 'Failed to create account',
           variant: 'destructive'
         });
         return false;
       }
 
-      // Insert new user
-      const result = await executeQuery<any>(
-        'INSERT INTO Users (name, email, password, role, created_at) VALUES (?, ?, ?, ?, NOW())',
-        [name, email, password, 'user']
-      );
+      // Create a profile in the users table
+      const { error: profileError } = await supabase
+        .from('users')
+        .insert({
+          id: authData.user.id,
+          name,
+          email,
+          role: 'user',
+          created_at: new Date().toISOString()
+        });
 
-      // Check if result is array and has insertId
-      if (!Array.isArray(result) || !result[0] || typeof result[0].insertId !== 'number') {
-        throw new Error('Failed to create user - Invalid result format');
+      if (profileError) {
+        console.error('Profile creation error:', profileError);
+        toast({
+          title: 'Profile creation failed',
+          description: profileError.message,
+          variant: 'destructive'
+        });
+        return false;
       }
-
-      const newUserId = result[0].insertId;
-      
-      const newUser = {
-        id: newUserId,
-        name,
-        email,
-        role: 'user' as const
-      };
-
-      setUser(newUser);
-      localStorage.setItem('user', JSON.stringify(newUser));
 
       toast({
         title: 'Signup successful',
@@ -133,9 +148,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('user');
     toast({
       title: 'Logged out',
       description: 'You have been successfully logged out'
